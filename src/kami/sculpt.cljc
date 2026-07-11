@@ -118,3 +118,44 @@
                                (let [ab (midpoint a b) bc (midpoint b c) ca (midpoint c a)]
                                  [a ab ca, ab b bc, ca bc c, ab bc ca])) triangles))]
     (assoc mesh :positions @positions :normals (mapv normalize @positions) :masks @masks :indices indices)))
+
+;; Non-destructive sculpt layers. Each layer stores additive position deltas
+;; against a stable base topology; evaluation is deterministic and portable.
+(defn sculpt-layer
+  ([id name vertex-count] (sculpt-layer id name vertex-count {}))
+  ([id name vertex-count {:keys [opacity visible?] :or {opacity 1.0 visible? true}}]
+   {:sculpt.layer/id id :sculpt.layer/name name :sculpt.layer/opacity opacity
+    :sculpt.layer/visible? visible? :sculpt.layer/deltas (vec (repeat vertex-count [0.0 0.0 0.0]))}))
+(defn sculpt-document [base-mesh]
+  (let [layer (sculpt-layer 1 "Base detail" (count (:positions base-mesh)))]
+    {:sculpt/base base-mesh :sculpt/layers [layer] :sculpt/active-layer 1 :sculpt/next-layer-id 2}))
+(defn find-layer [doc id] (first (filter #(= id (:sculpt.layer/id %)) (:sculpt/layers doc))))
+(defn evaluate-document [doc]
+  (let [base (:sculpt/base doc)
+        deltas (filter :sculpt.layer/visible? (:sculpt/layers doc))
+        positions (mapv (fn [index p]
+                          (reduce (fn [result layer]
+                                    (add result (scale (nth (:sculpt.layer/deltas layer) index)
+                                                       (:sculpt.layer/opacity layer)))) p deltas))
+                        (range) (:positions base))]
+    (assoc base :positions positions :normals (mapv normalize positions))))
+(defn add-layer [doc name]
+  (let [id (:sculpt/next-layer-id doc) layer (sculpt-layer id name (count (get-in doc [:sculpt/base :positions])))]
+    (-> doc (update :sculpt/layers conj layer) (assoc :sculpt/active-layer id) (update :sculpt/next-layer-id inc))))
+(defn update-layer [doc id f & args]
+  (update doc :sculpt/layers #(mapv (fn [layer] (if (= id (:sculpt.layer/id layer)) (apply f layer args) layer)) %)))
+(defn delete-layer [doc id]
+  (when (= 1 (count (:sculpt/layers doc))) (throw (ex-info "sculpt document needs one layer" {})))
+  (let [layers (vec (remove #(= id (:sculpt.layer/id %)) (:sculpt/layers doc)))]
+    (assoc doc :sculpt/layers layers :sculpt/active-layer
+           (if (= id (:sculpt/active-layer doc)) (:sculpt.layer/id (first layers)) (:sculpt/active-layer doc)))))
+(defn apply-layer-stroke [doc b symmetry]
+  (let [before (evaluate-document doc) after (apply-stroke before b symmetry)
+        increment (mapv sub (:positions after) (:positions before)) active (:sculpt/active-layer doc)]
+    (if (#{:mask :mask-erase} (:brush/mode b))
+      (assoc-in doc [:sculpt/base :masks] (:masks after))
+      (update-layer doc active update :sculpt.layer/deltas #(mapv add % increment)))))
+(defn subdivide-document
+  "Bake visible layers, subdivide topology, and start a fresh detail layer."
+  [doc]
+  (sculpt-document (subdivide-mesh (evaluate-document doc))))

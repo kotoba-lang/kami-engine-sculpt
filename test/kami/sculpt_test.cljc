@@ -39,3 +39,28 @@
     (is (= 6 (count (:positions subdivided))))
     (is (= 12 (count (:indices subdivided))))
     (is (= 6 (count (:masks subdivided))))))
+
+(deftest non-destructive-sculpt-layers
+  (let [base (sculpt/sphere-mesh 1 16 8) doc (sculpt/sculpt-document base)
+        first-stroke (sculpt/apply-layer-stroke doc (sculpt/brush [1 0 0] 0.8 0.2 :inflate) nil)
+        with-layer (sculpt/add-layer first-stroke "Wrinkles")
+        layered (sculpt/apply-layer-stroke with-layer (sculpt/brush [0 1 0] 0.8 0.15 :inflate) [:x])
+        active (:sculpt/active-layer layered)
+        hidden (sculpt/update-layer layered active assoc :sculpt.layer/visible? false)
+        half (sculpt/update-layer layered active assoc :sculpt.layer/opacity 0.5)]
+    (is (= (:positions base) (:positions (:sculpt/base layered))))
+    (is (= 2 (count (:sculpt/layers layered))))
+    (is (not= (:positions (sculpt/evaluate-document layered)) (:positions (sculpt/evaluate-document hidden))))
+    (is (not= (:positions (sculpt/evaluate-document layered)) (:positions (sculpt/evaluate-document half))))
+    (is (= 1 (count (:sculpt/layers (sculpt/delete-layer layered active)))))))
+
+(deftest layered-mask-and-topology-rebase
+  (let [doc (sculpt/sculpt-document (sculpt/sphere-mesh 1 8 4))
+        masked (sculpt/apply-layer-stroke doc (sculpt/brush [1 0 0] 0.8 1 :mask) nil)
+        rebased (sculpt/subdivide-document masked)]
+    (is (some pos? (get-in masked [:sculpt/base :masks])))
+    (is (= 1 (count (:sculpt/layers rebased))))
+    (is (> (count (get-in rebased [:sculpt/base :positions]))
+           (count (get-in doc [:sculpt/base :positions]))))
+    (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                 (sculpt/delete-layer doc 1)))))
