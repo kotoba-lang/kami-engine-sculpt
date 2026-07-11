@@ -205,3 +205,41 @@
   "Bake visible layers, subdivide topology, and start a fresh detail layer."
   [doc]
   (sculpt-document (subdivide-mesh (evaluate-document doc))))
+
+(defn voxel-remesh
+  "Deterministic surface voxel remesh: cluster vertices into cubic cells,
+  average position/normal/mask attributes, remove degenerate and duplicate
+  triangles, and compact unused vertices. Cell size is in world units."
+  [mesh cell-size]
+  (when-not (pos? cell-size) (throw (ex-info "remesh cell size must be positive" {:cell-size cell-size})))
+  (let [positions (:positions mesh) normals (:normals mesh)
+        masks (vec (or (:masks mesh) (repeat (count positions) 0.0)))
+        cell #(mapv (fn [v] #?(:clj (long (Math/floor (double (/ v cell-size))))
+                               :cljs (js/Math.floor (/ v cell-size)))) %)
+        grouped (reduce (fn [groups index] (update groups (cell (nth positions index)) (fnil conj []) index)) {} (range (count positions)))
+        ordered-cells (sort (keys grouped))
+        old->cluster (reduce (fn [mapping [cluster-id key]]
+                              (reduce #(assoc %1 %2 cluster-id) mapping (get grouped key))) {} (map-indexed vector ordered-cells))
+        average (fn [values] (scale (reduce add [0.0 0.0 0.0] values) (/ 1.0 (count values))))
+        clustered-pos (mapv #(average (map positions (get grouped %))) ordered-cells)
+        clustered-normal (mapv #(normalize (average (map normals (get grouped %)))) ordered-cells)
+        clustered-mask (mapv #(let [ids (get grouped %)] (/ (reduce + (map masks ids)) (count ids))) ordered-cells)
+        triangles (->> (partition 3 (:indices mesh))
+                       (map #(mapv old->cluster %))
+                       (remove #(not= 3 (count (distinct %))))
+                       (reduce (fn [{:keys [seen faces]} face]
+                                 (let [canonical (vec (sort face))]
+                                   (if (seen canonical) {:seen seen :faces faces}
+                                     {:seen (conj seen canonical) :faces (conj faces face)}))) {:seen #{} :faces []}) :faces)
+        used (vec (sort (set (mapcat identity triangles))))
+        compact (zipmap used (range))]
+    {:positions (mapv clustered-pos used) :normals (mapv clustered-normal used)
+     :masks (mapv clustered-mask used) :indices (vec (mapcat #(map compact %) triangles))
+     :remesh {:cell-size cell-size :source-vertices (count positions)
+              :result-vertices (count used) :result-triangles (count triangles)}}))
+
+(defn remesh-document
+  "Bake evaluated layers into a voxel-remeshed base and start a clean layer
+  whose delta cardinality exactly matches the new topology."
+  [doc cell-size]
+  (sculpt-document (voxel-remesh (evaluate-document doc) cell-size)))

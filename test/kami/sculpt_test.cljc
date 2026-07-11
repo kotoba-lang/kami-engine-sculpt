@@ -88,3 +88,25 @@
     (is (= copy-id (:sculpt.layer/id (first (:sculpt/layers moved)))))
     (is (= before (:positions (sculpt/evaluate-document baked))))
     (is (every? #(= [0.0 0.0 0.0] %) (:sculpt.layer/deltas (sculpt/find-layer baked 1))))))
+
+(deftest deterministic-voxel-remesh
+  (let [mesh {:positions [[0 0 0] [0.01 0 0] [1 0 0] [0 1 0] [0 1.01 0]]
+              :normals (vec (repeat 5 [0 0 1])) :masks [0 1 0 0 1]
+              :indices [0 2 3, 1 2 4, 0 1 2]}
+        remeshed (sculpt/voxel-remesh mesh 0.1)]
+    (is (= 3 (count (:positions remeshed))))
+    (is (= 3 (count (:indices remeshed))))
+    (is (= 1 (get-in remeshed [:remesh :result-triangles])))
+    (is (== 0.5 (first (:masks remeshed))))
+    (is (= remeshed (sculpt/voxel-remesh mesh 0.1)))
+    (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error) (sculpt/voxel-remesh mesh 0)))))
+
+(deftest voxel-remesh-rebases-sculpt-layers
+  (let [doc (-> (sculpt/sculpt-document (sculpt/sphere-mesh 1 12 6))
+                (sculpt/apply-layer-stroke (sculpt/brush [1 0 0] 0.8 0.3 :inflate) nil)
+                (sculpt/add-layer "Detail"))
+        remeshed (sculpt/remesh-document doc 0.25)
+        vertex-count (count (get-in remeshed [:sculpt/base :positions]))]
+    (is (= 1 (count (:sculpt/layers remeshed))))
+    (is (= vertex-count (count (:sculpt.layer/deltas (first (:sculpt/layers remeshed))))))
+    (is (pos? vertex-count))))
