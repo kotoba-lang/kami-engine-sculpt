@@ -147,3 +147,20 @@
     (is (= 1 (count (:sculpt/layers repaired))))
     (is (= (count (get-in repaired [:sculpt/base :positions]))
            (count (:sculpt.layer/deltas (first (:sculpt/layers repaired))))))))
+
+(deftest fills-simple-boundary-holes
+  (let [open {:positions [[0 0 0] [1 0 0] [1 1 0] [0 1 0]] :normals (vec (repeat 4 [0 0 1]))
+              :masks [0 0 1 1] :indices [0 1 2, 0 2 3]}
+        loops (sculpt/boundary-loops open) filled (sculpt/fill-boundary-holes open)
+        report (sculpt/topology-diagnostics filled)]
+    (is (= [[0 1 2 3]] loops))
+    (is (= 5 (count (:positions filled))))
+    (is (= 6 (:topology/triangle-count report)))
+    (is (:topology/closed? report))
+    (is (= 0.5 (double (last (:masks filled)))))
+    (is (= {:holes 1 :triangles 4 :closed? true} (:hole-fill filled)))))
+
+(deftest rejects-branching-boundaries
+  (let [branched {:positions [[0 0 0] [1 0 0] [0 1 0] [-1 0 0] [0 -1 0]] :normals (vec (repeat 5 [0 0 1]))
+                  :indices [0 1 2, 0 3 4]}]
+    (is (thrown? #?(:clj Exception :cljs js/Error) (sculpt/boundary-loops branched)))))

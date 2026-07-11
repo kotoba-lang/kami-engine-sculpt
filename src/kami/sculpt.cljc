@@ -296,3 +296,45 @@
   "Bake layers, repair topology, and rebase to one clean layer."
   [doc]
   (sculpt-document (repair-topology (evaluate-document doc))))
+
+(defn boundary-loops
+  "Extract deterministic simple loops from boundary edges. Branching or open
+  boundary graphs are rejected because an unambiguous patch cannot be made."
+  [mesh]
+  (let [edges (:topology/boundary-edges (topology-diagnostics mesh))
+        adjacency (reduce (fn [m [a b]] (-> m (update a (fnil conj #{}) b) (update b (fnil conj #{}) a))) {} edges)]
+    (when (some #(not= 2 (count %)) (vals adjacency))
+      (throw (ex-info "boundary is not a set of simple closed loops" {:adjacency adjacency})))
+    (loop [remaining (set edges) loops []]
+      (if-let [[start next] (first (sort remaining))]
+        (let [loop-vertices
+              (loop [previous start current next result [start] unused remaining]
+                (let [edge (vec (sort [previous current])) unused (disj unused edge) result (conj result current)]
+                  (if (= current start) {:vertices (pop result) :remaining unused}
+                    (let [candidate (first (sort (remove #{previous} (get adjacency current))))]
+                      (when-not candidate (throw (ex-info "open boundary loop" {:at current})))
+                      (recur current candidate result unused)))))]
+          (recur (:remaining loop-vertices) (conj loops (:vertices loop-vertices))))
+        loops))))
+
+(defn fill-boundary-holes
+  "Patch every simple boundary loop with a center fan and interpolated vertex
+  attributes. Existing surface vertices/faces remain unchanged."
+  [mesh]
+  (let [loops (boundary-loops mesh) positions (atom (vec (:positions mesh)))
+        normals (atom (vec (:normals mesh))) masks (atom (vec (or (:masks mesh) (repeat (count @positions) 0.0))))
+        added (mapv (fn [loop]
+                      (let [center-id (count @positions) n (count loop)
+                            center (scale (reduce add [0.0 0.0 0.0] (map @positions loop)) (/ 1.0 n))
+                            normal (normalize (reduce add [0.0 0.0 0.0] (map @normals loop)))
+                            mask (/ (reduce + (map @masks loop)) n)]
+                        (swap! positions conj center) (swap! normals conj normal) (swap! masks conj mask)
+                        (vec (mapcat (fn [a b] [b a center-id]) loop (concat (rest loop) [(first loop)]))))) loops)
+        result (assoc mesh :positions @positions :normals @normals :masks @masks
+                     :indices (into (vec (:indices mesh)) (mapcat identity added)))
+        report (topology-diagnostics result)]
+    (assoc result :hole-fill {:holes (count loops) :triangles (reduce + (map count loops))
+                              :closed? (:topology/closed? report)})))
+
+(defn fill-holes-document [doc]
+  (sculpt-document (fill-boundary-holes (evaluate-document doc))))
