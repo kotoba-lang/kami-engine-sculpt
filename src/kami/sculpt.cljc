@@ -149,6 +149,34 @@
   (let [layers (vec (remove #(= id (:sculpt.layer/id %)) (:sculpt/layers doc)))]
     (assoc doc :sculpt/layers layers :sculpt/active-layer
            (if (= id (:sculpt/active-layer doc)) (:sculpt.layer/id (first layers)) (:sculpt/active-layer doc)))))
+(defn move-layer [doc id target-index]
+  (let [layers (:sculpt/layers doc) source-index (first (keep-indexed #(when (= id (:sculpt.layer/id %2)) %1) layers))]
+    (when-not source-index (throw (ex-info "sculpt layer not found" {:id id})))
+    (let [target (max 0 (min (dec (count layers)) target-index)) layer (nth layers source-index)
+          without (vec (concat (subvec layers 0 source-index) (subvec layers (inc source-index))))
+          reordered (vec (concat (subvec without 0 target) [layer] (subvec without target)))]
+      (assoc doc :sculpt/layers reordered))))
+(defn duplicate-layer [doc id]
+  (let [source (find-layer doc id)]
+    (when-not source (throw (ex-info "sculpt layer not found" {:id id})))
+    (let [new-id (:sculpt/next-layer-id doc) copy (assoc source :sculpt.layer/id new-id
+                                                        :sculpt.layer/name (str (:sculpt.layer/name source) " Copy"))
+          index (first (keep-indexed #(when (= id (:sculpt.layer/id %2)) %1) (:sculpt/layers doc)))
+          at (inc index) layers (:sculpt/layers doc)]
+      (-> doc (assoc :sculpt/layers (vec (concat (subvec layers 0 at) [copy] (subvec layers at)))
+                     :sculpt/active-layer new-id) (update :sculpt/next-layer-id inc)))))
+(defn bake-layer
+  "Bake one visible layer's effective delta into the base while preserving the evaluated mesh."
+  [doc id]
+  (let [layer (find-layer doc id)]
+    (when-not layer (throw (ex-info "sculpt layer not found" {:id id})))
+    (let [base (if (:sculpt.layer/visible? layer)
+                 (update (:sculpt/base doc) :positions
+                         #(mapv add % (mapv (fn [d] (scale d (:sculpt.layer/opacity layer))) (:sculpt.layer/deltas layer))))
+                 (:sculpt/base doc))
+          zeroed (assoc layer :sculpt.layer/deltas (vec (repeat (count (:positions base)) [0.0 0.0 0.0]))
+                              :sculpt.layer/opacity 1.0 :sculpt.layer/visible? true)]
+      (-> doc (assoc :sculpt/base base) (update-layer id (constantly zeroed))))))
 (defn apply-layer-stroke [doc b symmetry]
   (let [before (evaluate-document doc) after (apply-stroke before b symmetry)
         increment (mapv sub (:positions after) (:positions before)) active (:sculpt/active-layer doc)]

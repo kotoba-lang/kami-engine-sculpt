@@ -64,3 +64,15 @@
            (count (get-in doc [:sculpt/base :positions]))))
     (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
                  (sculpt/delete-layer doc 1)))))
+
+(deftest layer-stack-operations-preserve-data
+  (let [doc (-> (sculpt/sculpt-document (sculpt/sphere-mesh 1 8 4))
+                (sculpt/apply-layer-stroke (sculpt/brush [1 0 0] 0.8 0.2 :inflate) nil)
+                (sculpt/add-layer "Detail"))
+        duplicate (sculpt/duplicate-layer doc 1) copy-id (:sculpt/active-layer duplicate)
+        moved (sculpt/move-layer duplicate copy-id 0)
+        before (:positions (sculpt/evaluate-document doc)) baked (sculpt/bake-layer doc 1)]
+    (is (= 3 (count (:sculpt/layers duplicate))))
+    (is (= copy-id (:sculpt.layer/id (first (:sculpt/layers moved)))))
+    (is (= before (:positions (sculpt/evaluate-document baked))))
+    (is (every? #(= [0.0 0.0 0.0] %) (:sculpt.layer/deltas (sculpt/find-layer baked 1))))))
