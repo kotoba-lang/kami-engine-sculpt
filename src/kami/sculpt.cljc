@@ -243,3 +243,24 @@
   whose delta cardinality exactly matches the new topology."
   [doc cell-size]
   (sculpt-document (voxel-remesh (evaluate-document doc) cell-size)))
+
+(defn topology-diagnostics
+  "Analyze indexed triangle topology for retopology/remesh validation."
+  [mesh]
+  (let [vertex-count (count (:positions mesh)) triangles (vec (partition 3 (:indices mesh)))
+        degenerate (keep-indexed (fn [index face]
+                                   (when (or (not= 3 (count (distinct face)))
+                                             (some #(not (< -1 % vertex-count)) face)) index)) triangles)
+        valid-faces (remove (fn [face] (or (not= 3 (count (distinct face)))
+                                           (some #(not (< -1 % vertex-count)) face))) triangles)
+        edges (frequencies (mapcat (fn [[a b c]] [(vec (sort [a b])) (vec (sort [b c])) (vec (sort [c a]))]) valid-faces))
+        boundary (vec (sort (keep (fn [[edge count]] (when (= 1 count) edge)) edges)))
+        non-manifold (vec (sort (keep (fn [[edge count]] (when (> count 2) edge)) edges)))
+        used (set (mapcat identity valid-faces)) isolated (vec (remove used (range vertex-count)))
+        valence (reduce (fn [result [a b]] (-> result (update a (fnil inc 0)) (update b (fnil inc 0)))) {} (keys edges))]
+    {:topology/vertex-count vertex-count :topology/triangle-count (count triangles)
+     :topology/boundary-edges boundary :topology/non-manifold-edges non-manifold
+     :topology/degenerate-faces (vec degenerate) :topology/isolated-vertices isolated
+     :topology/valence (mapv #(get valence % 0) (range vertex-count))
+     :topology/manifold? (and (empty? non-manifold) (empty? degenerate) (empty? isolated))
+     :topology/closed? (and (empty? boundary) (empty? non-manifold) (empty? degenerate) (empty? isolated))}))

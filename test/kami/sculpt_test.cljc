@@ -110,3 +110,21 @@
     (is (= 1 (count (:sculpt/layers remeshed))))
     (is (= vertex-count (count (:sculpt.layer/deltas (first (:sculpt/layers remeshed))))))
     (is (pos? vertex-count))))
+
+(deftest topology-diagnostics-for-retopology
+  (let [open {:positions [[0 0 0] [1 0 0] [0 1 0] [2 2 2]] :normals (vec (repeat 4 [0 0 1])) :indices [0 1 2]}
+        report (sculpt/topology-diagnostics open)
+        closed (sculpt/topology-diagnostics (sculpt/sphere-mesh 1 8 4))]
+    (is (= 3 (count (:topology/boundary-edges report))))
+    (is (= [3] (:topology/isolated-vertices report)))
+    (is (false? (:topology/manifold? report)))
+    (is (false? (:topology/closed? report)))
+    (is (:topology/manifold? closed))))
+
+(deftest detects-degenerate-and-non-manifold-faces
+  (let [mesh {:positions [[0 0 0] [1 0 0] [0 1 0] [0 -1 0] [0 0 1]] :normals (vec (repeat 5 [0 0 1]))
+              :indices [0 1 2, 1 0 3, 0 1 4, 0 0 2]}
+        report (sculpt/topology-diagnostics mesh)]
+    (is (= [[0 1]] (:topology/non-manifold-edges report)))
+    (is (= [3] (:topology/degenerate-faces report)))
+    (is (false? (:topology/manifold? report)))))
