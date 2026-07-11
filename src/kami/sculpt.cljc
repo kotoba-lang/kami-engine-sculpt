@@ -264,3 +264,35 @@
      :topology/valence (mapv #(get valence % 0) (range vertex-count))
      :topology/manifold? (and (empty? non-manifold) (empty? degenerate) (empty? isolated))
      :topology/closed? (and (empty? boundary) (empty? non-manifold) (empty? degenerate) (empty? isolated))}))
+
+(defn repair-topology
+  "Deterministically remove invalid/degenerate/duplicate triangles and reject
+  later triangles that would make any edge non-manifold, then compact all
+  per-vertex attributes. Boundary holes are reported but not fabricated."
+  [mesh]
+  (let [vertex-count (count (:positions mesh)) source (vec (partition 3 (:indices mesh)))
+        valid? #(and (= 3 (count (distinct %))) (every? (fn [i] (< -1 i vertex-count)) %))
+        candidates (filter valid? source)
+        accepted (reduce (fn [{:keys [faces edge-counts seen]} face]
+                           (let [canonical (vec (sort face)) edges (mapv #(vec (sort %))
+                                                                        [[(nth face 0) (nth face 1)]
+                                                                         [(nth face 1) (nth face 2)]
+                                                                         [(nth face 2) (nth face 0)]])]
+                             (if (or (seen canonical) (some #(>= (get edge-counts % 0) 2) edges))
+                               {:faces faces :edge-counts edge-counts :seen seen}
+                               {:faces (conj faces face) :edge-counts (reduce #(update %1 %2 (fnil inc 0)) edge-counts edges)
+                                :seen (conj seen canonical)})))
+                         {:faces [] :edge-counts {} :seen #{}} candidates)
+        faces (:faces accepted) used (vec (sort (set (mapcat identity faces)))) compact (zipmap used (range))
+        masks (vec (or (:masks mesh) (repeat vertex-count 0.0)))
+        repaired {:positions (mapv (:positions mesh) used) :normals (mapv (:normals mesh) used)
+                  :masks (mapv masks used) :indices (vec (mapcat #(map compact %) faces))}
+        diagnostics (topology-diagnostics repaired)]
+    (assoc repaired :repair {:source-triangles (count source) :result-triangles (count faces)
+                             :removed-triangles (- (count source) (count faces))
+                             :diagnostics diagnostics})))
+
+(defn repair-document [doc]
+  "Bake layers, repair topology, and rebase to one clean layer."
+  [doc]
+  (sculpt-document (repair-topology (evaluate-document doc))))

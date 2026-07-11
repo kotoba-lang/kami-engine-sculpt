@@ -128,3 +128,22 @@
     (is (= [[0 1]] (:topology/non-manifold-edges report)))
     (is (= [3] (:topology/degenerate-faces report)))
     (is (false? (:topology/manifold? report)))))
+
+(deftest deterministic-topology-repair
+  (let [mesh {:positions [[0 0 0] [1 0 0] [0 1 0] [0 -1 0] [0 0 1] [9 9 9]]
+              :normals (vec (repeat 6 [0 0 1])) :masks [0 0.1 0.2 0.3 0.4 1]
+              :indices [0 1 2, 0 1 2, 1 0 3, 0 1 4, 0 0 2, 0 1 99]}
+        repaired (sculpt/repair-topology mesh) report (sculpt/topology-diagnostics repaired)]
+    (is (= 2 (get-in repaired [:repair :result-triangles])))
+    (is (= 4 (get-in repaired [:repair :removed-triangles])))
+    (is (empty? (:topology/non-manifold-edges report)))
+    (is (empty? (:topology/degenerate-faces report)))
+    (is (empty? (:topology/isolated-vertices report)))
+    (is (= repaired (sculpt/repair-topology mesh)))))
+
+(deftest topology-repair-rebases-layers
+  (let [doc (-> (sculpt/sculpt-document (sculpt/sphere-mesh 1 8 4)) (sculpt/add-layer "Detail"))
+        repaired (sculpt/repair-document doc)]
+    (is (= 1 (count (:sculpt/layers repaired))))
+    (is (= (count (get-in repaired [:sculpt/base :positions]))
+           (count (:sculpt.layer/deltas (first (:sculpt/layers repaired))))))))
