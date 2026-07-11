@@ -25,6 +25,18 @@
     (is (every? zero? (:masks (sculpt/clear-mask masked))))
     (is (= 1.0 (first (:masks (sculpt/invert-mask mesh)))))))
 
+(deftest adjacency-mask-filters
+  (let [mesh {:positions [[0 0 0] [1 0 0] [0 1 0] [2 0 0]] :normals [[0 0 1] [0 0 1] [0 0 1] [0 0 1]]
+              :indices [0 1 2 1 3 2] :masks [1.0 0.0 0.0 0.0]}
+        blurred (sculpt/filter-mask mesh :blur) grown (sculpt/filter-mask mesh :grow)
+        shrunk (sculpt/filter-mask (assoc mesh :masks [1 1 1 0]) :shrink)
+        sharpened (sculpt/filter-mask (assoc mesh :masks [0.6 0.4 0.4 0.4]) :sharpen)]
+    (is (< 0 (nth (:masks blurred) 1) 1))
+    (is (= [1.0 1.0 1.0 0.0] (:masks grown)))
+    (is (= [1 0 0 0] (:masks shrunk)))
+    (is (> (first (:masks sharpened)) 0.6))
+    (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error) (sculpt/filter-mask mesh :unknown)))))
+
 (deftest stable-strokes-and-multi-axis-symmetry
   (let [points [[0 0 0] [1 0 0]]
         sampled (sculpt/resample-stroke points 0.25)

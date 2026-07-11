@@ -40,6 +40,24 @@
 
 (defn clear-mask [mesh] (assoc mesh :masks (vec (repeat (count (:positions mesh)) 0.0))))
 (defn invert-mask [mesh] (update mesh :masks #(mapv (fn [v] (- 1.0 v)) (or % (repeat (count (:positions mesh)) 0.0)))))
+(defn vertex-neighbours [mesh]
+  (let [result (atom (vec (repeat (count (:positions mesh)) #{})))]
+    (doseq [[a b c] (partition 3 (:indices mesh)) [x y] [[a b] [b c] [c a]]]
+      (swap! result update x conj y) (swap! result update y conj x))
+    @result))
+(defn filter-mask [mesh operation]
+  (let [masks (vec (or (:masks mesh) (repeat (count (:positions mesh)) 0.0))) neighbours (vertex-neighbours mesh)
+        average (fn [i] (/ (reduce + (nth masks i) (map masks (nth neighbours i))) (inc (count (nth neighbours i)))))
+        clamp #(max 0.0 (min 1.0 %))
+        filtered (mapv (fn [i current]
+                         (case operation
+                           :blur (average i)
+                           :sharpen (clamp (+ current (- current (average i))))
+                           :grow (reduce max current (map masks (nth neighbours i)))
+                           :shrink (reduce min current (map masks (nth neighbours i)))
+                           (throw (ex-info "unknown mask filter" {:operation operation}))))
+                       (range (count masks)) masks)]
+    (assoc mesh :masks filtered)))
 
 (defn apply-mask-brush
   "Paint or erase a per-vertex mask using the same quadratic brush falloff."
