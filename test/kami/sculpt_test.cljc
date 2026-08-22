@@ -1,4 +1,4 @@
-(ns kami.sculpt-test (:require [clojure.test :refer [deftest is]] [kami.sculpt :as sculpt]))
+(ns kami.sculpt-test (:require [clojure.test :refer [deftest is testing]] [kami.sculpt :as sculpt]))
 (deftest sphere-topology
   (let [m (sculpt/sphere-mesh 1 16 8)]
     (is (= 153 (count (:positions m))))
@@ -9,7 +9,36 @@
         one (sculpt/apply-stroke m b nil) both (sculpt/apply-stroke m b :x)]
     (is (not= (:positions m) (:positions one)))
     (is (> (count (filter false? (map = (:positions m) (:positions both))))
-           (count (filter false? (map = (:positions m) (:positions one))))))))
+           (count (filter false? (map = (:positions m) (:positions one))))))
+
+    ;; The two assertions above are about symmetry and about SOMETHING moving.
+    ;; Neither of them is about falloff, and this test's name promises falloff.
+    ;; Measured 2026-08-24 by the mutation harness in com-junkawasaki/root:
+    ;; replacing the quadratic `(1 - d/r)^2` with a constant 1.0 — which turns
+    ;; the brush into a cylindrical cookie cutter, moving the rim exactly as
+    ;; far as the centre — left this test GREEN.
+    ;;
+    ;; Falloff means the displacement falls off with distance from the brush
+    ;; centre. So: bucket the moved vertices by distance and require the near
+    ;; ones to move further than the far ones.
+    (testing "and the displacement falls off with distance from the centre"
+      (let [centre [1.0 0.0 0.0]
+            dist (fn [p] (Math/sqrt (reduce + (map (fn [a b] (* (- a b) (- a b))) p centre))))
+            deltas (keep identity
+                          (map (fn [p0 p1]
+                                 (let [d (Math/sqrt (reduce + (map (fn [a b] (* (- a b) (- a b))) p0 p1)))]
+                                   (when (> d 1.0e-12) [(dist p0) d])))
+                               (:positions m) (:positions one)))
+            near (filter (fn [[r _]] (< r 0.3)) deltas)
+            far (filter (fn [[r _]] (> r 0.6)) deltas)]
+        (is (seq near) "the fixture has vertices near the brush centre")
+        (is (seq far) "and vertices out near the brush edge")
+        (is (> (/ (reduce + (map second near)) (count near))
+               (* 2.0 (/ (reduce + (map second far)) (count far))))
+            (str "near vertices moved " (/ (reduce + (map second near)) (count near))
+                 " on average and far ones " (/ (reduce + (map second far)) (count far))
+                 " — with a quadratic falloff the near ones move several times"
+                 " further, and with no falloff at all they move the same"))))))
 
 (deftest masks-protect-sculpted-vertices
   (let [mesh (sculpt/sphere-mesh 1 16 8)
