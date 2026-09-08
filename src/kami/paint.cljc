@@ -28,7 +28,7 @@
   筆のテクスチャ、UV 展開そのもの（`kami.modeling` のトリム面と別の話）、
   テクスチャの圧縮・書き出し形式。**PBR 層は値の合成までで、レンダリングは
   しない** —— それは `kotoba-lang/raytrace` と `kotoba-lang/webgpu` の面。"
-  (:require [clojure.string :as string]))
+  (:require [kotoba.lang.text :as string]))
 
 (defn- v- [a b] (mapv - a b))
 (defn- v+ [a b] (mapv + a b))
