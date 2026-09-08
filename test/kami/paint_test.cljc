@@ -1,6 +1,6 @@
 (ns kami.paint-test
   (:require [clojure.test :refer [deftest is testing]]
-            [clojure.string :as string]
+            [kotoba.lang.text :as string]
             [kami.paint :as p]))
 
 (defn- abs* [x] (#?(:clj Math/abs :cljs js/Math.abs) (double x)))
